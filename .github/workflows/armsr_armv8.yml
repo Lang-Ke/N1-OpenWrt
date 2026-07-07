@@ -14,6 +14,10 @@ on:
   schedule:
     - cron: "0 0 1,16 * *"
 
+permissions:
+  contents: write
+
+
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -92,6 +96,7 @@ jobs:
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
         tag_name: OpenWrt_${{ env.FILE_DATE }}
         files: ${{ env.PACKAGED_OUTPUTPATH }}/*.img.gz
         body: |
