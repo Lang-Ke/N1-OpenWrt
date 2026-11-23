@@ -61,6 +61,10 @@ do
   cp -a "clone/daeuniverse/$pkg" package/daeuniverse/
 done
 
+# This N1 image uses eth0 directly for its LAN instead of an OpenWrt bridge.
+sed -i 's/lan_interface: br-lan/lan_interface: eth0/' \
+  package/daeuniverse/honk/files/config.dae
+
 # OpenWrt's package build PATH can put its staged Cargo ahead of rustup.
 # honk selects pinned stable/nightly toolchains, so keep rustup's proxies first.
 python3 - <<'PY'
