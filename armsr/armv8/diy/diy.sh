@@ -61,6 +61,24 @@ do
   cp -a "clone/daeuniverse/$pkg" package/daeuniverse/
 done
 
+# OpenWrt's package build PATH can put its staged Cargo ahead of rustup.
+# honk selects pinned stable/nightly toolchains, so keep rustup's proxies first.
+python3 - <<'PY'
+from pathlib import Path
+
+build_script = Path("package/daeuniverse/honk/build.sh")
+text = build_script.read_text()
+marker = "set -eu\n"
+if text.count(marker) != 1:
+    raise SystemExit("honk/build.sh: expected one set -eu marker")
+text = text.replace(
+    marker,
+    marker + 'export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"\n',
+    1,
+)
+build_script.write_text(text)
+PY
+
 # The honk Makefile requires sources at honk/src.
 # Match the tag expected by the pinned package Makefile.
 git clone --depth=1 --branch v0.1.0-beta.6 \

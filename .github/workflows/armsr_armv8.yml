@@ -69,6 +69,46 @@ jobs:
       uses: P3TERX/ssh2actions@main
       if: github.event.inputs.ssh == 'true'
 
+    - name: Prepare honk build dependencies
+      working-directory: ./openwrt
+      shell: bash
+      run: |
+        set -euo pipefail
+        honk_source="$PWD/package/daeuniverse/honk/src"
+        test -f "$honk_source/rust-toolchain.toml"
+        test -f "$honk_source/crates/honk-ebpf/rust-toolchain.toml"
+        test -f "$honk_source/.github/ci/pins.env"
+
+        sudo apt-get update
+        sudo apt-get install -y clang llvm libbpf-dev pkg-config cmake libclang-dev zstd
+
+        cargo_dir="${CARGO_HOME:-$HOME/.cargo}"
+        mkdir -p "$cargo_dir/bin"
+        export CARGO_HOME="$cargo_dir"
+        export PATH="$cargo_dir/bin:$PATH"
+        echo "CARGO_HOME=$cargo_dir" >> "$GITHUB_ENV"
+        echo "$cargo_dir/bin" >> "$GITHUB_PATH"
+        command -v rustup
+
+        stable_channel="$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["toolchain"]["channel"])' "$honk_source/rust-toolchain.toml")"
+        ebpf_channel="$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["toolchain"]["channel"])' "$honk_source/crates/honk-ebpf/rust-toolchain.toml")"
+
+        rustup toolchain install "$stable_channel" --profile minimal
+        rustup target add --toolchain "$stable_channel" aarch64-unknown-linux-musl
+        rustup toolchain install "$ebpf_channel" --profile minimal \
+          --component rust-src --component llvm-tools
+
+        source "$honk_source/.github/ci/pins.env"
+        linker_archive="$RUNNER_TEMP/honk-bpf-linker.tar.zst"
+        curl -fsSL --retry 3 -o "$linker_archive" \
+          "https://github.com/aya-rs/bpf-linker/releases/download/v${BPF_LINKER_VERSION}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+        echo "${BPF_LINKER_SHA256}  ${linker_archive}" | sha256sum -c -
+        zstd -dc "$linker_archive" | tar -xf - -C "$cargo_dir/bin"
+
+        rustc +"$stable_channel" --version
+        rustup target list --toolchain "$stable_channel" --installed
+        bpf-linker --version
+
     - name: Download package
       working-directory: ./openwrt
       run: |
@@ -81,7 +121,22 @@ jobs:
         chmod -R 755 openwrt
         cd openwrt
         echo -e "$(nproc) thread compile"
-        make -j$(( $(nproc) + 1 )) || make -j1 V=s
+        set -o pipefail
+        make -j$(( $(nproc) + 1 )) V=s BUILD_LOG=1 2>&1 | tee compile-parallel.log || \
+          make -j1 V=s BUILD_LOG=1 2>&1 | tee compile-serial.log
+
+    - name: Upload build failure logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: n1-build-failure-logs
+        path: |
+          openwrt/compile-parallel.log
+          openwrt/compile-serial.log
+          openwrt/logs/
+          openwrt/.config
+          openwrt/feeds.conf.default
+        if-no-files-found: warn
 
     - name: Package N1 firmware
       uses: ophub/amlogic-s9xxx-openwrt@main
